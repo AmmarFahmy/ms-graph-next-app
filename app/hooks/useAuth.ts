@@ -396,8 +396,11 @@ export const useAuth = () => {
             // Sync Next Week Events
             await syncNextWeekEventsToDatabase(graphClient, userData);
 
-            // Update the UI with success message
+            // Update the UI with success message that disappears after 3 seconds
             setError('Database sync completed successfully!');
+            setTimeout(() => {
+                setError(null);
+            }, 10000);
         } catch (error: any) {
             console.error('Error syncing to database:', error);
             setError(`Failed to sync to database: ${error.message}`);

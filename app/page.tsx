@@ -179,7 +179,7 @@ export default function Home() {
                                     className={styles.signOutButton}
                                     disabled={isLoading}
                                 >
-                                    {isLoading ? 'Signing out...' : 'Sign Out'}
+                                    {isLoading ? 'Loading...' : 'Sign Out'}
                                 </button>
                                 <button
                                     onClick={syncToDatabase}

@@ -37,6 +37,8 @@ export default function Assistant({ userId }: { userId: string }) {
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isRagSynced, setIsRagSynced] = useState(false);
+  const [isRagSyncing, setIsRagSyncing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [retryingMessage, setRetryingMessage] = useState<string | null>(null);
@@ -59,6 +61,12 @@ export default function Assistant({ userId }: { userId: string }) {
         console.error('Error parsing saved messages:', error);
       }
     }
+    
+    // Check if RAG data was previously synced for this user
+    const ragSyncStatus = localStorage.getItem(`rag_sync_status_${userId}`);
+    if (ragSyncStatus === 'synced') {
+      setIsRagSynced(true);
+    }
   }, [userId]);
 
   // Save conversation history to localStorage when messages change
@@ -75,12 +83,14 @@ export default function Assistant({ userId }: { userId: string }) {
 
   // Auto-focus input on component mount
   useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    if (isRagSynced) {
+      inputRef.current?.focus();
+    }
+  }, [isRagSynced]);
 
   // Clear conversation history
   const handleClearConversation = () => {
-    if (window.confirm('Are you sure you want to clear this conversation?')) {
+    if (window.confirm('Are you sure you want to start a new conversation? This will clear your current chat history.')) {
       setMessages([
         {
           role: 'assistant',
@@ -89,6 +99,61 @@ export default function Assistant({ userId }: { userId: string }) {
         }
       ]);
       localStorage.removeItem(`chat_history_${userId}`);
+    }
+  };
+
+  // Handle RAG Sync
+  const handleRagSync = async () => {
+    if (!userId || isRagSyncing) return;
+    
+    setIsRagSyncing(true);
+    
+    try {
+      const response = await fetch('http://localhost:8000/load_user_data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ user_id: userId }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || 'Failed to sync RAG data');
+      }
+      
+      const data = await response.json();
+      
+      setIsRagSynced(true);
+      localStorage.setItem(`rag_sync_status_${userId}`, 'synced');
+      
+      // Add a system message about successful sync
+      setMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `I've successfully synced your data. ${data.document_count} items are now available for search, including ${data.document_types.emails} emails, ${data.document_types.calendar_events} calendar events, and ${data.document_types.next_week_events} upcoming events. How can I help you today?`,
+          timestamp: new Date()
+        }
+      ]);
+      
+      toast.success('RAG data synced successfully');
+    } catch (error: any) {
+      console.error('Error syncing RAG data:', error);
+      toast.error(`Failed to sync RAG data: ${error.message}`);
+      
+      // Add error message to chat
+      setMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `I encountered an error while syncing your data. Please try again or contact support if the issue persists.`,
+          timestamp: new Date(),
+          error: true
+        }
+      ]);
+    } finally {
+      setIsRagSyncing(false);
     }
   };
 
@@ -116,7 +181,7 @@ export default function Assistant({ userId }: { userId: string }) {
 
   // Function to retry a failed message
   const retryMessage = async (messageContent: string) => {
-    if (isLoading) return;
+    if (isLoading || !isRagSynced) return;
     
     setRetryingMessage(messageContent);
     setIsLoading(true);
@@ -129,7 +194,7 @@ export default function Assistant({ userId }: { userId: string }) {
         },
         body: JSON.stringify({
           query: messageContent,
-          user_id: userId
+          filter_by: { user_id: userId }
         }),
       });
       
@@ -166,7 +231,7 @@ export default function Assistant({ userId }: { userId: string }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!inputValue.trim() || isLoading) return;
+    if (!inputValue.trim() || isLoading || !isRagSynced) return;
     
     const userMessage = {
       role: 'user' as const,
@@ -182,9 +247,6 @@ export default function Assistant({ userId }: { userId: string }) {
       inputRef.current.style.height = 'auto';
     }
     
-    // Remove client-side greeting and thank you handling
-    // All messages will be sent to the backend API
-    
     try {
       const response = await fetch('http://localhost:8000/query', {
         method: 'POST',
@@ -193,7 +255,7 @@ export default function Assistant({ userId }: { userId: string }) {
         },
         body: JSON.stringify({
           query: userMessage.content,
-          user_id: userId
+          filter_by: { user_id: userId }
         }),
       });
       
@@ -240,157 +302,215 @@ export default function Assistant({ userId }: { userId: string }) {
           <h2 className="text-3xl font-bold text-gray-800">Assistant</h2>
           <p className="text-gray-600">Ask me anything about your emails, calendar, or documents</p>
         </div>
-        <button
-          onClick={handleClearConversation}
-          className="text-gray-500 hover:text-gray-700 transition-colors p-2"
-          title="Clear conversation"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-          </svg>
-        </button>
-      </div>
-      
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {messages.map((message, index) => (
-          <div 
-            key={index} 
-            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div 
-              className={`max-w-[80%] rounded-2xl p-4 ${
-                message.role === 'user' 
-                  ? 'bg-blue-500 text-white rounded-tr-none' 
-                  : message.error 
-                    ? 'bg-red-50 text-gray-800 rounded-tl-none border border-red-200' 
-                    : 'bg-gray-100 text-gray-800 rounded-tl-none'
-              }`}
+        <div className="flex items-center space-x-2">
+          {isRagSynced && (
+            <button
+              onClick={handleRagSync}
+              className="bg-green-50 text-green-600 hover:bg-green-100 transition-colors px-3 py-1.5 rounded-full text-sm font-medium border border-green-200 flex items-center"
+              disabled={isRagSyncing}
+              title="Sync your data again"
             >
-              {message.role === 'user' ? (
-                <div className="whitespace-pre-wrap">{message.content}</div>
+              {isRagSyncing ? (
+                <>
+                  <div className="w-3 h-3 rounded-full border-2 border-green-600 border-t-transparent animate-spin mr-1"></div>
+                  Syncing...
+                </>
               ) : (
-                <div className="markdown-content prose prose-sm max-w-none">
-                  <ReactMarkdown
-                    components={{
-                      p: ({node, ...props}) => <p className="mb-2 whitespace-pre-line" {...props} />,
-                      h1: ({node, ...props}) => <h1 className="text-xl font-bold mb-2 mt-3" {...props} />,
-                      h2: ({node, ...props}) => <h2 className="text-lg font-bold mb-2 mt-3" {...props} />,
-                      h3: ({node, ...props}) => <h3 className="text-md font-bold mb-1 mt-2" {...props} />,
-                      ul: ({node, ...props}) => <ul className="list-disc pl-5 mb-2" {...props} />,
-                      ol: ({node, ...props}) => <ol className="list-decimal pl-5 mb-2" {...props} />,
-                      li: ({node, ...props}) => <li className="mb-1" {...props} />,
-                      a: ({node, ...props}) => <a className="text-blue-600 hover:underline" {...props} />,
-                      code: ({inline, className, children, ...props}: any) => 
-                        inline 
-                          ? <code className="bg-gray-200 px-1 py-0.5 rounded text-sm" {...props}>{children}</code>
-                          : <code className="block bg-gray-200 p-2 rounded text-sm overflow-x-auto my-2 whitespace-pre" {...props}>{children}</code>,
-                      pre: ({node, ...props}) => <pre className="bg-gray-200 p-2 rounded overflow-x-auto my-2 whitespace-pre" {...props} />,
-                      blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-gray-300 pl-3 italic my-2" {...props} />,
-                      table: ({node, ...props}) => <table className="border-collapse border border-gray-300 my-2 w-full" {...props} />,
-                      th: ({node, ...props}) => <th className="border border-gray-300 p-2 bg-gray-200" {...props} />,
-                      td: ({node, ...props}) => <td className="border border-gray-300 p-2" {...props} />,
-                    }}
-                  >
-                    {message.content}
-                  </ReactMarkdown>
-                </div>
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+                  </svg>
+                  RAG Sync
+                </>
               )}
-              <div 
-                className={`text-xs mt-1 ${
-                  message.role === 'user' 
-                    ? 'text-blue-100' 
-                    : message.error 
-                      ? 'text-red-400' 
-                      : 'text-gray-500'
-                }`}
-              >
-                {formatTime(message.timestamp)}
-              </div>
-              
-              {message.role === 'assistant' && message.documents && message.documents.length > 0 && (
-                <SourceDocuments documents={message.documents} />
-              )}
-              
-              {message.role === 'assistant' && message.error && (
-                <div className="mt-2">
-                  <button
-                    onClick={() => {
-                      // Extract the query from the error message
-                      const match = message.content.match(/"([^"]+)"/);
-                      if (match && match[1]) {
-                        retryMessage(match[1]);
-                      }
-                    }}
-                    disabled={isLoading || retryingMessage !== null}
-                    className="text-xs bg-white text-blue-600 border border-blue-200 rounded-full px-3 py-1.5 hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {retryingMessage ? 'Retrying...' : 'Retry'}
-                  </button>
-                </div>
-              )}
-              
-              {/* Show suggested questions after the first assistant message if there are only 1-2 messages */}
-              {message.role === 'assistant' && messages.length <= 2 && index === 0 && (
-                <div className="mt-4 pt-3 border-t border-gray-200">
-                  <div className="text-xs text-gray-500 mb-2">Try asking:</div>
-                  <div className="flex flex-wrap gap-2">
-                    <SuggestedQuestion 
-                      question="What emails did I receive from John last week?" 
-                      onClick={handleSuggestedQuestion} 
-                    />
-                    <SuggestedQuestion 
-                      question="Do I have any meetings scheduled for tomorrow?" 
-                      onClick={handleSuggestedQuestion} 
-                    />
-                    <SuggestedQuestion 
-                      question="What's in my knowledge base about project planning?" 
-                      onClick={handleSuggestedQuestion} 
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-        <div ref={messagesEndRef} />
-        
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="max-w-[80%] rounded-2xl p-4 bg-gray-100 text-gray-800 rounded-tl-none">
-              <TypingIndicator />
-            </div>
-          </div>
-        )}
-      </div>
-      
-      <form onSubmit={handleSubmit} className="p-4 border-t border-gray-200">
-        <div className="relative">
-          <textarea
-            ref={inputRef}
-            value={inputValue}
-            onChange={handleTextareaChange}
-            placeholder="Type your message..."
-            className="w-full p-4 pr-16 rounded-xl border border-gray-300 focus:border-blue-500 focus:ring focus:ring-blue-200 focus:ring-opacity-50 resize-none overflow-hidden"
-            style={{ minHeight: '56px', maxHeight: '120px' }}
-            rows={1}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit(e);
-              }
-            }}
-          />
+            </button>
+          )}
           <button
-            type="submit"
-            disabled={!inputValue.trim() || isLoading}
-            className="absolute right-3 bottom-3 p-2 rounded-lg bg-blue-500 text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-600 transition-colors"
+            onClick={handleClearConversation}
+            className="bg-white text-blue-600 hover:bg-blue-50 transition-colors px-3 py-1.5 rounded-full text-sm font-medium border border-blue-200"
+            title="Start a new conversation"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 transform rotate-90" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-            </svg>
+            Start New
           </button>
         </div>
-      </form>
+      </div>
+      
+      {!isRagSynced ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-6 bg-gray-50">
+          <div className="text-center max-w-md">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mx-auto text-blue-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <h3 className="text-xl font-bold text-gray-800 mb-2">Sync Your Data</h3>
+            <p className="text-gray-600 mb-6">
+              To use the assistant, you need to sync your emails, calendar events, and documents first.
+              This ensures that the assistant can provide personalized responses based on your data.
+            </p>
+            <button
+              onClick={handleRagSync}
+              className="bg-blue-600 text-white hover:bg-blue-700 transition-colors px-6 py-3 rounded-lg text-base font-medium shadow-md flex items-center justify-center mx-auto"
+              disabled={isRagSyncing}
+            >
+              {isRagSyncing ? (
+                <>
+                  <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin mr-2"></div>
+                  Syncing Your Data...
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+                  </svg>
+                  RAG Sync
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {messages.map((message, index) => (
+              <div 
+                key={index} 
+                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                <div 
+                  className={`max-w-[80%] rounded-2xl p-4 ${
+                    message.role === 'user' 
+                      ? 'bg-blue-500 text-white rounded-tr-none' 
+                      : message.error 
+                        ? 'bg-red-50 text-gray-800 rounded-tl-none border border-red-200' 
+                        : 'bg-gray-100 text-gray-800 rounded-tl-none'
+                  }`}
+                >
+                  {message.role === 'user' ? (
+                    <div className="whitespace-pre-wrap">{message.content}</div>
+                  ) : (
+                    <div className="markdown-content prose prose-sm max-w-none">
+                      <ReactMarkdown
+                        components={{
+                          p: ({node, ...props}) => <p className="mb-2 whitespace-pre-line" {...props} />,
+                          h1: ({node, ...props}) => <h1 className="text-xl font-bold mb-2 mt-3" {...props} />,
+                          h2: ({node, ...props}) => <h2 className="text-lg font-bold mb-2 mt-3" {...props} />,
+                          h3: ({node, ...props}) => <h3 className="text-md font-bold mb-1 mt-2" {...props} />,
+                          ul: ({node, ...props}) => <ul className="list-disc pl-5 mb-2" {...props} />,
+                          ol: ({node, ...props}) => <ol className="list-decimal pl-5 mb-2" {...props} />,
+                          li: ({node, ...props}) => <li className="mb-1" {...props} />,
+                          a: ({node, ...props}) => <a className="text-blue-600 hover:underline" {...props} />,
+                          code: ({inline, className, children, ...props}: any) => 
+                            inline 
+                              ? <code className="bg-gray-200 px-1 py-0.5 rounded text-sm" {...props}>{children}</code>
+                              : <code className="block bg-gray-200 p-2 rounded text-sm overflow-x-auto my-2 whitespace-pre" {...props}>{children}</code>,
+                          pre: ({node, ...props}) => <pre className="bg-gray-200 p-2 rounded overflow-x-auto my-2 whitespace-pre" {...props} />,
+                          blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-gray-300 pl-3 italic my-2" {...props} />,
+                          table: ({node, ...props}) => <table className="border-collapse border border-gray-300 my-2 w-full" {...props} />,
+                          th: ({node, ...props}) => <th className="border border-gray-300 p-2 bg-gray-200" {...props} />,
+                          td: ({node, ...props}) => <td className="border border-gray-300 p-2" {...props} />,
+                        }}
+                      >
+                        {message.content}
+                      </ReactMarkdown>
+                    </div>
+                  )}
+                  <div 
+                    className={`text-xs mt-1 ${
+                      message.role === 'user' 
+                        ? 'text-blue-100' 
+                        : message.error 
+                          ? 'text-red-400' 
+                          : 'text-gray-500'
+                    }`}
+                  >
+                    {formatTime(message.timestamp)}
+                  </div>
+                  
+                  {message.role === 'assistant' && message.documents && message.documents.length > 0 && (
+                    <SourceDocuments documents={message.documents} />
+                  )}
+                  
+                  {message.role === 'assistant' && message.error && (
+                    <div className="mt-2">
+                      <button
+                        onClick={() => {
+                          // Extract the query from the error message
+                          const match = message.content.match(/"([^"]+)"/);
+                          if (match && match[1]) {
+                            retryMessage(match[1]);
+                          }
+                        }}
+                        disabled={isLoading || retryingMessage !== null}
+                        className="text-xs bg-white text-blue-600 border border-blue-200 rounded-full px-3 py-1.5 hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {retryingMessage ? 'Retrying...' : 'Retry'}
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Show suggested questions after the first assistant message if there are only 1-2 messages */}
+                  {message.role === 'assistant' && messages.length <= 2 && index === 0 && (
+                    <div className="mt-4 pt-3 border-t border-gray-200">
+                      <div className="text-xs text-gray-500 mb-2">Try asking:</div>
+                      <div className="flex flex-wrap gap-2">
+                        <SuggestedQuestion 
+                          question="What emails did I receive from John last week?" 
+                          onClick={handleSuggestedQuestion} 
+                        />
+                        <SuggestedQuestion 
+                          question="Do I have any meetings scheduled for tomorrow?" 
+                          onClick={handleSuggestedQuestion} 
+                        />
+                        <SuggestedQuestion 
+                          question="What's in my knowledge base about project planning?" 
+                          onClick={handleSuggestedQuestion} 
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+            
+            {isLoading && (
+              <div className="flex justify-start">
+                <div className="max-w-[80%] rounded-2xl p-4 bg-gray-100 text-gray-800 rounded-tl-none">
+                  <TypingIndicator />
+                </div>
+              </div>
+            )}
+          </div>
+          
+          <form onSubmit={handleSubmit} className="p-4 border-t border-gray-200">
+            <div className="relative">
+              <textarea
+                ref={inputRef}
+                value={inputValue}
+                onChange={handleTextareaChange}
+                placeholder="Type your message..."
+                className="w-full p-4 pr-16 rounded-xl border border-gray-300 focus:border-blue-500 focus:ring focus:ring-blue-200 focus:ring-opacity-50 resize-none overflow-hidden"
+                style={{ minHeight: '56px', maxHeight: '120px' }}
+                rows={1}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit(e);
+                  }
+                }}
+              />
+              <button
+                type="submit"
+                disabled={!inputValue.trim() || isLoading}
+                className="absolute right-3 bottom-3 p-2 rounded-lg bg-blue-500 text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-600 transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 transform rotate-90" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                </svg>
+              </button>
+            </div>
+          </form>
+        </>
+      )}
     </div>
   );
 }

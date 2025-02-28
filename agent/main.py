@@ -384,6 +384,7 @@ class QueryRequest(BaseModel):
     query: str
     top_k: Optional[int] = MAX_CHUNKS
     filter_by: Optional[Dict[str, Any]] = None
+    user_id: Optional[str] = None
 
 
 class DocumentResponse(BaseModel):
@@ -409,24 +410,36 @@ async def startup_event():
     global documents
     try:
         logger.info("Starting up the application...")
+        logger.info("Application startup completed successfully")
+    except Exception as e:
+        logger.error(f"Error during startup: {str(e)}")
 
-        # Get default user_id from environment variable or use None to load all data
-        default_user_id = os.getenv("DEFAULT_USER_ID")
-        if default_user_id:
-            logger.info(
-                f"Using default user_id for data loading: {default_user_id}")
-        else:
-            logger.warning(
-                "No DEFAULT_USER_ID set. Loading data for all users. This is not recommended for production.")
+
+@app.post("/load_user_data")
+async def load_user_data(request: dict):
+    user_id = request.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+
+    global documents
+    try:
+        logger.info(f"Loading data for user: {user_id}")
+
+        # Clear existing documents from the document store
+        # The delete_documents method requires document_ids, so we'll create a new document store instead
+        global document_store
+        document_store = InMemoryDocumentStore(
+            embedding_similarity_function="cosine")
+        documents = []
 
         # Load documents, emails, and events with user_id filtering
-        doc_documents = load_documents_from_db(user_id=default_user_id)
+        doc_documents = load_documents_from_db(user_id=user_id)
         email_documents = load_emails_from_db(
-            200, user_id=default_user_id)  # Last 200 emails
+            200, user_id=user_id)  # Last 200 emails
         calendar_documents = load_calendar_events_from_db(
-            50, user_id=default_user_id)  # Last 50 calendar events
+            50, user_id=user_id)  # Last 50 calendar events
         next_week_documents = load_next_week_events_from_db(
-            user_id=default_user_id)  # All next week events
+            user_id=user_id)  # All next week events
 
         # Combine all documents
         all_documents = doc_documents + email_documents + \
@@ -463,9 +476,22 @@ async def startup_event():
 
         logger.info(
             f"Successfully indexed {len(processed_docs)} documents in the document store")
-        logger.info("Application startup completed successfully")
+
+        return {
+            "status": "success",
+            "message": f"Successfully loaded and indexed {len(processed_docs)} documents for user {user_id}",
+            "document_count": len(processed_docs),
+            "document_types": {
+                "documents": len(doc_documents),
+                "emails": len(email_documents),
+                "calendar_events": len(calendar_documents),
+                "next_week_events": len(next_week_documents)
+            }
+        }
     except Exception as e:
-        logger.error(f"Error during startup: {str(e)}")
+        logger.error(f"Error loading user data: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error loading user data: {str(e)}")
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -484,30 +510,13 @@ async def query(request: QueryRequest):
         # Create a retriever for this specific query
         retriever = InMemoryEmbeddingRetriever(document_store=document_store)
 
-        # Apply filters if provided
-        filters = {}
-        if request.filter_by:
-            filters = request.filter_by
-            logger.info(f"Applying filters: {filters}")
-
-        # Extract user_id from the request if available
-        # This would typically come from your authentication system
-        # This ensures proper data segregation at query time
-        user_id = request.filter_by.get(
-            "user_id") if request.filter_by else None
-        if user_id:
-            # If user_id is provided, add it to filters to ensure user-specific results
-            filters["user_id"] = user_id
-            logger.info(f"Filtering results for user_id: {user_id}")
-        else:
-            logger.warning(
-                "No user_id provided in query. This may return data from all users.")
+        # We don't need to filter by user_id since we're already loading user-specific data
+        # into the document store when they sync
 
         # Run retrieval directly with the list of floats
         retrieval_result = retriever.run(
             query_embedding=query_embedding,
-            top_k=request.top_k,
-            filters=filters
+            top_k=request.top_k
         )
         retrieved_docs = retrieval_result["documents"]
 
