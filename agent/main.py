@@ -403,6 +403,7 @@ class QueryResponse(BaseModel):
 
 # Load documents at startup
 documents = []
+user_id = None
 
 
 @app.on_event("startup")
@@ -417,11 +418,12 @@ async def startup_event():
 
 @app.post("/load_user_data")
 async def load_user_data(request: dict):
-    user_id = request.get("user_id")
-    if not user_id:
+    input_user_id = request.get("user_id")
+    if not input_user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
 
-    global documents
+    global documents, user_id
+    user_id = input_user_id
     try:
         logger.info(f"Loading data for user: {user_id}")
 
@@ -497,6 +499,11 @@ async def load_user_data(request: dict):
 @app.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
     try:
+        # Use the request user_id if provided, otherwise fall back to the global user_id
+        global user_id
+        effective_user_id = request.user_id or user_id
+
+        logger.info(f"Processing User ID: {effective_user_id}")
         logger.info(f"Processing query: {request.query}")
 
         # Get embeddings for the query using OpenAI
@@ -525,14 +532,14 @@ async def query(request: QueryRequest):
         # First, check if we have any documents
         if not retrieved_docs:
             return QueryResponse(
-                answer="I don't have enough relevant information to answer this question. This question appears to be outside the scope of the documents I have access to.",
+                answer="I don't have enough relevant information to answer this question. This question appears to be outside the scope of the context I have access to.",
                 documents=[]
             )
 
         # Create a prompt to check relevance
         domain_check_prompt = """
         I have access to the following types of information:
-        1. Documents about a person named Ammar, containing professional background, skills, education, and contact information
+        1. Documents related to the current user (user_id: {user_id}), containing professional background, skills, education, and contact information
         2. Emails with subjects, senders, recipients, and content previews
         3. Calendar events with subjects, dates, times, and attendees
         4. Upcoming events scheduled for next week
@@ -549,7 +556,7 @@ async def query(request: QueryRequest):
             model=LLM_MODEL,
             messages=[
                 {"role": "system", "content": domain_check_prompt.format(
-                    question=request.query)}
+                    question=request.query, user_id=effective_user_id or "current user")}
             ],
             temperature=0.1,
         )
@@ -866,7 +873,7 @@ async def query(request: QueryRequest):
         You are an expert information extractor. Your task is to carefully analyze the provided information and extract the most relevant details to answer the user's question in a helpful, conversational way.
 
         The information includes:
-        - Documents about a person named Ammar (professional background, skills, education)
+        - Documents related to the current user (user_id: {user_id}) (professional background, skills, education)
         - Emails (subjects, senders, recipients, content previews)
         - Calendar events (subjects, dates, times, attendees)
         - Upcoming events scheduled for next week
@@ -925,7 +932,8 @@ async def query(request: QueryRequest):
                     person_names=", ".join(query_info.get("person_names", [])),
                     time_period=query_info.get("time_period", ""),
                     content_type=query_info.get("content_type", ""),
-                    other_criteria=query_info.get("other_criteria", "")
+                    other_criteria=query_info.get("other_criteria", ""),
+                    user_id=effective_user_id or "current user"
                 )}
             ],
             temperature=0.1,
