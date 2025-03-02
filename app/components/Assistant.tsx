@@ -132,7 +132,7 @@ export default function Assistant({ userId }: { userId: string }) {
         ...prev,
         {
           role: 'assistant',
-          content: `I've successfully synced your data. ${data.document_count} items are now available for search, including ${data.document_types.emails} emails, ${data.document_types.calendar_events} calendar events, and ${data.document_types.next_week_events} upcoming events. How can I help you today?`,
+          content: `I've successfully synced your data. ${data.document_count} items are now available for chat, including ${data.document_types.emails} emails, ${data.document_types.calendar_events} calendar events, and ${data.document_types.next_week_events} upcoming events. How can I help you today?`,
           timestamp: new Date()
         }
       ]);
