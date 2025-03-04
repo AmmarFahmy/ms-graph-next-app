@@ -415,110 +415,119 @@ export const useAuth = () => {
         let skip = 0;
         const batchSize = 50;
 
-        while (hasMoreEmails) {
-            const response = await graphClient
-                .api(graphConfig.graphEmailsEndpoint)
-                .select('id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,isRead')
-                .skip(skip)
-                .top(batchSize)
-                .orderby('receivedDateTime desc')
-                .get();
+        try {
+            while (hasMoreEmails) {
+                const response = await graphClient
+                    .api(graphConfig.graphEmailsEndpoint)
+                    .select('id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,isRead')
+                    .skip(skip)
+                    .top(batchSize)
+                    .orderby('receivedDateTime desc')
+                    .get();
 
-            const batch = response.value;
-            if (batch.length === 0) {
-                hasMoreEmails = false;
-            } else {
-                allEmails = [...allEmails, ...batch];
-                skip += batchSize;
+                const batch = response.value;
+                if (batch.length === 0) {
+                    hasMoreEmails = false;
+                } else {
+                    // Validate email data before processing
+                    const validatedBatch = batch.map((email: any) => {
+                        // Check for required fields and provide defaults if missing
+                        if (!email.from) {
+                            console.warn('Email missing "from" field:', email.id);
+                            email.from = { emailAddress: { name: 'Unknown', address: 'unknown@example.com' } };
+                        } else if (!email.from.emailAddress) {
+                            console.warn('Email missing "from.emailAddress" field:', email.id);
+                            email.from.emailAddress = { name: 'Unknown', address: 'unknown@example.com' };
+                        }
 
-                // Process this batch immediately
-                if (batch.length > 0) {
-                    const apiResponse = await fetch('/api/db-sync', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            type: 'emails',
-                            data: batch,
-                            userId: userData.email
-                        }),
+                        // Ensure toRecipients and ccRecipients are arrays
+                        if (!Array.isArray(email.toRecipients)) {
+                            console.warn('Email has invalid toRecipients:', email.id);
+                            email.toRecipients = [];
+                        }
+
+                        if (!Array.isArray(email.ccRecipients)) {
+                            console.warn('Email has invalid ccRecipients:', email.id);
+                            email.ccRecipients = [];
+                        }
+
+                        return email;
                     });
 
-                    if (!apiResponse.ok) {
-                        const errorData = await apiResponse.json();
-                        throw new Error(`Failed to sync emails: ${errorData.error}`);
+                    allEmails = [...allEmails, ...validatedBatch];
+                    skip += batchSize;
+
+                    // Process this batch immediately
+                    if (validatedBatch.length > 0) {
+                        try {
+                            const apiResponse = await fetch('/api/db-sync', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    type: 'emails',
+                                    data: validatedBatch,
+                                    userId: userData.email
+                                }),
+                            });
+
+                            if (!apiResponse.ok) {
+                                const errorData = await apiResponse.json();
+                                throw new Error(`Failed to sync emails: ${errorData.error}`);
+                            }
+                        } catch (error: any) {
+                            console.error('Error syncing email batch:', error);
+                            throw new Error(`Failed to sync emails: ${error.message}`);
+                        }
                     }
                 }
             }
+        } catch (error: any) {
+            console.error('Error in syncEmailsToDatabase:', error);
+            throw new Error(`Failed to sync emails: ${error.message}`);
         }
     };
 
     const syncEventsToDatabase = async (graphClient: Client, userData: UserData) => {
-        // Fetch all events if not already in state
-        let eventsToSync = allEvents;
-        if (allEvents.length === 0) {
-            const account = msalInstance.getAllAccounts()[0];
-            eventsToSync = await fetchAllEvents(account);
-        }
+        try {
+            // Fetch all events if not already in state
+            let eventsToSync = allEvents;
+            if (allEvents.length === 0) {
+                const account = msalInstance.getAllAccounts()[0];
+                eventsToSync = await fetchAllEvents(account);
+            }
 
-        if (eventsToSync.length > 0) {
-            const apiResponse = await fetch('/api/db-sync', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    type: 'events',
-                    data: eventsToSync,
-                    userId: userData.email,
-                    tableName: 'outlook_events'
-                }),
+            // Validate events data before processing
+            const validatedEvents = eventsToSync.map((event: any) => {
+                // Check for required fields and provide defaults if missing
+                if (!event.start) {
+                    console.warn('Event missing "start" field:', event.id);
+                    event.start = { dateTime: new Date().toISOString(), timeZone: 'UTC' };
+                } else if (!event.start.dateTime) {
+                    console.warn('Event missing "start.dateTime" field:', event.id);
+                    event.start.dateTime = new Date().toISOString();
+                }
+
+                if (!event.end) {
+                    console.warn('Event missing "end" field:', event.id);
+                    event.end = { dateTime: new Date().toISOString(), timeZone: 'UTC' };
+                } else if (!event.end.dateTime) {
+                    console.warn('Event missing "end.dateTime" field:', event.id);
+                    event.end.dateTime = new Date().toISOString();
+                }
+
+                // Ensure attendees is an array
+                if (!Array.isArray(event.attendees)) {
+                    console.warn('Event has invalid attendees:', event.id);
+                    event.attendees = [];
+                }
+
+                return event;
             });
 
-            if (!apiResponse.ok) {
-                const errorData = await apiResponse.json();
-                throw new Error(`Failed to sync events: ${errorData.error}`);
-            }
-        }
-    };
-
-    const syncNextWeekEventsToDatabase = async (graphClient: Client, userData: UserData) => {
-        // Get all next week's events first
-        const startDate = new Date();
-        const endDate = new Date(startDate);
-        endDate.setDate(startDate.getDate() + 7);
-
-        const startDateString = startDate.toISOString();
-        const endDateString = endDate.toISOString();
-
-        let allNextWeekEvents: CalendarEvent[] = [];
-        let hasMoreEvents = true;
-        let skip = 0;
-        const batchSize = 50;
-
-        while (hasMoreEvents) {
-            const response = await graphClient
-                .api('/me/calendarview')
-                .query({
-                    startDateTime: startDateString,
-                    endDateTime: endDateString
-                })
-                .select('id,subject,bodyPreview,start,end,attendees')
-                .skip(skip)
-                .top(batchSize)
-                .orderby('start/dateTime')
-                .get();
-
-            const batch = response.value || [];
-            if (batch.length === 0) {
-                hasMoreEvents = false;
-            } else {
-                allNextWeekEvents = [...allNextWeekEvents, ...batch];
-                skip += batchSize;
-
-                // Process this batch immediately
-                if (batch.length > 0) {
+            if (validatedEvents.length > 0) {
+                try {
                     const apiResponse = await fetch('/api/db-sync', {
                         method: 'POST',
                         headers: {
@@ -526,18 +535,125 @@ export const useAuth = () => {
                         },
                         body: JSON.stringify({
                             type: 'events',
-                            data: batch,
+                            data: validatedEvents,
                             userId: userData.email,
-                            tableName: 'outlook_next_week_events'
+                            tableName: 'outlook_events'
                         }),
                     });
 
                     if (!apiResponse.ok) {
                         const errorData = await apiResponse.json();
-                        throw new Error(`Failed to sync next week events: ${errorData.error}`);
+                        throw new Error(`Failed to sync events: ${errorData.error}`);
                     }
+                } catch (error: any) {
+                    console.error('Error syncing events:', error);
+                    throw new Error(`Failed to sync events: ${error.message}`);
                 }
             }
+        } catch (error: any) {
+            console.error('Error in syncEventsToDatabase:', error);
+            throw new Error(`Failed to sync events: ${error.message}`);
+        }
+    };
+
+    const syncNextWeekEventsToDatabase = async (graphClient: Client, userData: UserData) => {
+        try {
+            // Get all next week's events first
+            const startDate = new Date();
+            const endDate = new Date(startDate);
+            endDate.setDate(startDate.getDate() + 7);
+
+            const startDateString = startDate.toISOString();
+            const endDateString = endDate.toISOString();
+
+            let allNextWeekEvents: CalendarEvent[] = [];
+            let hasMoreEvents = true;
+            let skip = 0;
+            const batchSize = 50;
+
+            while (hasMoreEvents) {
+                try {
+                    const response = await graphClient
+                        .api('/me/calendarview')
+                        .query({
+                            startDateTime: startDateString,
+                            endDateTime: endDateString
+                        })
+                        .select('id,subject,bodyPreview,start,end,attendees')
+                        .skip(skip)
+                        .top(batchSize)
+                        .orderby('start/dateTime')
+                        .get();
+
+                    const batch = response.value || [];
+                    if (batch.length === 0) {
+                        hasMoreEvents = false;
+                    } else {
+                        // Validate events data before processing
+                        const validatedBatch = batch.map((event: any) => {
+                            // Check for required fields and provide defaults if missing
+                            if (!event.start) {
+                                console.warn('Event missing "start" field:', event.id);
+                                event.start = { dateTime: new Date().toISOString(), timeZone: 'UTC' };
+                            } else if (!event.start.dateTime) {
+                                console.warn('Event missing "start.dateTime" field:', event.id);
+                                event.start.dateTime = new Date().toISOString();
+                            }
+
+                            if (!event.end) {
+                                console.warn('Event missing "end" field:', event.id);
+                                event.end = { dateTime: new Date().toISOString(), timeZone: 'UTC' };
+                            } else if (!event.end.dateTime) {
+                                console.warn('Event missing "end.dateTime" field:', event.id);
+                                event.end.dateTime = new Date().toISOString();
+                            }
+
+                            // Ensure attendees is an array
+                            if (!Array.isArray(event.attendees)) {
+                                console.warn('Event has invalid attendees:', event.id);
+                                event.attendees = [];
+                            }
+
+                            return event;
+                        });
+
+                        allNextWeekEvents = [...allNextWeekEvents, ...validatedBatch];
+                        skip += batchSize;
+
+                        // Process this batch immediately
+                        if (validatedBatch.length > 0) {
+                            try {
+                                const apiResponse = await fetch('/api/db-sync', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                    },
+                                    body: JSON.stringify({
+                                        type: 'events',
+                                        data: validatedBatch,
+                                        userId: userData.email,
+                                        tableName: 'outlook_next_week_events'
+                                    }),
+                                });
+
+                                if (!apiResponse.ok) {
+                                    const errorData = await apiResponse.json();
+                                    throw new Error(`Failed to sync next week events: ${errorData.error}`);
+                                }
+                            } catch (error: any) {
+                                console.error('Error syncing next week events batch:', error);
+                                throw new Error(`Failed to sync next week events: ${error.message}`);
+                            }
+                        }
+                    }
+                } catch (error: any) {
+                    console.error('Error fetching next week events batch:', error);
+                    throw new Error(`Failed to fetch next week events: ${error.message}`);
+                }
+            }
+        } catch (error: any) {
+            console.error('Error in syncNextWeekEventsToDatabase:', error);
+            throw new Error(`Failed to sync next week events: ${error.message}`);
         }
     };
 

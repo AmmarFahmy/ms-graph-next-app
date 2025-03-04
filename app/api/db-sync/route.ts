@@ -16,36 +16,55 @@ export async function POST(request: Request) {
 
         switch (type) {
             case 'emails':
-                // Format emails data
-                const emailsToUpsert = data.map((email: any) => ({
-                    user_id: userId,
-                    mail_id: email.id,
-                    subject: email.subject,
-                    from_name: email.from.emailAddress.name,
-                    from_email: email.from.emailAddress.address,
-                    received_datetime: email.receivedDateTime,
-                    body_preview: email.bodyPreview,
-                    is_read: email.isRead,
-                    to_recipients: email.toRecipients,
-                    cc_recipients: email.ccRecipients
-                }));
+                // Format emails data with proper null checks
+                const emailsToUpsert = data.map((email: any) => {
+                    // Add defensive checks for all properties
+                    const fromName = email.from?.emailAddress?.name || 'Unknown';
+                    const fromEmail = email.from?.emailAddress?.address || 'unknown@example.com';
+
+                    // Ensure toRecipients and ccRecipients are arrays
+                    const toRecipients = Array.isArray(email.toRecipients) ? email.toRecipients : [];
+                    const ccRecipients = Array.isArray(email.ccRecipients) ? email.ccRecipients : [];
+
+                    return {
+                        user_id: userId,
+                        mail_id: email.id || `unknown-${Date.now()}-${Math.random()}`,
+                        subject: email.subject || 'No Subject',
+                        from_name: fromName,
+                        from_email: fromEmail,
+                        received_datetime: email.receivedDateTime || new Date().toISOString(),
+                        body_preview: email.bodyPreview || '',
+                        is_read: !!email.isRead,
+                        to_recipients: toRecipients,
+                        cc_recipients: ccRecipients
+                    };
+                });
 
                 result = await upsertEmails(emailsToUpsert);
                 break;
 
             case 'events':
-                // Format events data
-                const eventsToUpsert = data.map((event: any) => ({
-                    user_id: userId,
-                    event_id: event.id,
-                    subject: event.subject,
-                    body_preview: event.bodyPreview,
-                    start_datetime: event.start.dateTime,
-                    end_datetime: event.end.dateTime,
-                    start_timezone: event.start.timeZone,
-                    end_timezone: event.end.timeZone,
-                    attendees: event.attendees
-                }));
+                // Format events data with proper null checks
+                const eventsToUpsert = data.map((event: any) => {
+                    // Add defensive checks for all properties
+                    const startDateTime = event.start?.dateTime || new Date().toISOString();
+                    const endDateTime = event.end?.dateTime || new Date().toISOString();
+                    const startTimeZone = event.start?.timeZone || 'UTC';
+                    const endTimeZone = event.end?.timeZone || 'UTC';
+                    const attendees = Array.isArray(event.attendees) ? event.attendees : [];
+
+                    return {
+                        user_id: userId,
+                        event_id: event.id || `unknown-${Date.now()}-${Math.random()}`,
+                        subject: event.subject || 'No Subject',
+                        body_preview: event.bodyPreview || '',
+                        start_datetime: startDateTime,
+                        end_datetime: endDateTime,
+                        start_timezone: startTimeZone,
+                        end_timezone: endTimeZone,
+                        attendees: attendees
+                    };
+                });
 
                 result = await upsertEvents(eventsToUpsert, tableName || 'outlook_events');
                 break;
