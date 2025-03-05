@@ -5,6 +5,29 @@ import { toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
 import { Components } from 'react-markdown';
 
+// Add styles for the typing indicator animation
+const typingIndicatorStyles = `
+  @keyframes wave {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+  }
+  
+  .animate-wave-1 {
+    animation: wave 1.3s infinite ease-in-out;
+    animation-delay: 0s;
+  }
+  
+  .animate-wave-2 {
+    animation: wave 1.3s infinite ease-in-out;
+    animation-delay: 0.2s;
+  }
+  
+  .animate-wave-3 {
+    animation: wave 1.3s infinite ease-in-out;
+    animation-delay: 0.4s;
+  }
+`;
+
 interface Message {
   role: 'user' | 'assistant';
   content: string;
@@ -572,10 +595,18 @@ function SuggestedQuestion({ question, onClick }: { question: string; onClick: (
 // Typing indicator component
 function TypingIndicator() {
   return (
-    <div className="flex items-center space-x-1">
-      <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0ms' }}></div>
-      <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '150ms' }}></div>
-      <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '300ms' }}></div>
-    </div>
+    <>
+      <style dangerouslySetInnerHTML={{ __html: typingIndicatorStyles }} />
+      <div className="flex items-center text-black text-sm">
+        <span className="inline-flex items-center font-light tracking-wide">
+          Thinking
+          <span className="inline-flex w-4 overflow-hidden">
+            <span className="animate-wave-1">.</span>
+            <span className="animate-wave-2">.</span>
+            <span className="animate-wave-3">.</span>
+          </span>
+        </span>
+      </div>
+    </>
   );
 } 
