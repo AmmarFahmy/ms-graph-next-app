@@ -2,9 +2,9 @@ import { Configuration, PopupRequest } from '@azure/msal-browser';
 
 export const msalConfig: Configuration = {
     auth: {
-        clientId: 'dd2e0cf6-894b-4816-ba10-01a45d1447c6',
+        clientId: 'ed7d50c7-d4e0-4fa3-ab44-04e8e1b7093b',
         authority: 'https://login.microsoftonline.com/77e3b5a4-521b-4caf-a71c-1f4d9d0d549e',
-        redirectUri: 'https://ms-graph-next-app.vercel.app'
+        redirectUri: 'https://meta-self-next-app.vercel.app'
     }
 
     // when running locally, comment out the above and uncomment the below
