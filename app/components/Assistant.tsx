@@ -221,7 +221,7 @@ export default function Assistant({ userId }: { userId: string }) {
       toast.success('Successfully retrieved response');
     } catch (error) {
       console.error('Error retrying query:', error);
-      toast.error('Failed to get a response again. Please try a different question.');
+      toast.error('Failed to get a response again. Please try a different question. ');
     } finally {
       setIsLoading(false);
       setRetryingMessage(null);
