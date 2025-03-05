@@ -2,7 +2,7 @@ import './globals.css';
 import { Toaster } from 'sonner';
 
 export const metadata = {
-  title: 'MetaSelf',
+  title: 'LLM Twin',
   description: 'Outlook Integration with Knowledge Base',
 }
 
