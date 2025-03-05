@@ -12,6 +12,8 @@ The backend follows a modular architecture:
 4. **Embedding Generation**: Generates embeddings for documents that don't have pre-computed embeddings.
 5. **RAG Pipeline**: Implements a retrieval-augmented generation pipeline using Haystack components.
 6. **User-Based Filtering**: Ensures data privacy by filtering all operations by user_id.
+7. **Langfuse Integration**: Provides observability and tracing for all LLM operations.
+8. **Modular Query Processing**: Breaks down the query process into separate, observable functions.
 
 ## Key Components
 
@@ -30,8 +32,12 @@ The backend follows a modular architecture:
    - Receive query from frontend
    - Generate embeddings for the query
    - Retrieve relevant documents based on embedding similarity
-   - Filter results by user_id if provided
-   - Generate a response using OpenAI's LLM
+   - Check query relevance to available data
+   - Analyze query to extract key information (people, time periods, etc.)
+   - Filter documents based on query analysis
+   - Format context from filtered documents
+   - Extract information from context
+   - Format final answer
    - Return the response and relevant documents to the frontend
 
 ## User-Based Filtering
@@ -44,6 +50,39 @@ The backend implements user-based filtering to ensure data privacy and security:
 
 To enable user-based filtering, set the `DEFAULT_USER_ID` environment variable to the ID of the user whose data should be loaded at startup.
 
+## Langfuse Observability
+
+The backend integrates with Langfuse for comprehensive observability of all LLM operations:
+
+- Each function in the query pipeline is decorated with `@observe()` for detailed tracing
+- User context is passed to Langfuse for user-specific analytics
+- Performance metrics are automatically collected for each step
+- Error tracking is integrated throughout the pipeline
+
+To enable Langfuse, set the following environment variables:
+- `LANGFUSE_PUBLIC_KEY`: Your Langfuse public key
+- `LANGFUSE_SECRET_KEY`: Your Langfuse secret key
+- `LANGFUSE_HOST`: Your Langfuse host URL (default: https://cloud.langfuse.com)
+
+## Modular Query Pipeline
+
+The query process is broken down into separate functions, each with its own observability:
+
+1. `generate_query_embeddings`: Generates embeddings for the query text
+2. `retrieve_documents`: Retrieves relevant documents using the query embedding
+3. `check_query_relevance`: Checks if the query is relevant to the available data
+4. `analyze_query`: Extracts key information from the query (people, time periods, etc.)
+5. `filter_documents`: Filters documents based on the query analysis
+6. `format_context`: Formats the context from the filtered documents
+7. `extract_information`: Extracts relevant information from the context
+8. `format_final_answer`: Formats the final answer based on the extracted information
+
+This modular approach provides:
+- Better error isolation and handling
+- Detailed performance metrics for each step
+- Improved code maintainability
+- Easier debugging and testing
+
 ## Environment Variables
 
 | Variable | Description | Default |
@@ -54,8 +93,39 @@ To enable user-based filtering, set the `DEFAULT_USER_ID` environment variable t
 | EMBEDDER_MODEL | OpenAI model for embeddings | text-embedding-3-small |
 | MAX_CHUNKS | Maximum number of chunks to retrieve | 20 |
 | DEFAULT_USER_ID | User ID for filtering data | - |
+| LANGFUSE_PUBLIC_KEY | Langfuse public key | - |
+| LANGFUSE_SECRET_KEY | Langfuse secret key | - |
+| LANGFUSE_HOST | Langfuse host URL | https://cloud.langfuse.com |
 
 ## API Endpoints
+
+### Load User Data Endpoint
+
+```
+POST /load_user_data
+```
+
+Request body:
+```json
+{
+  "user_id": "user_email@example.com"
+}
+```
+
+Response:
+```json
+{
+  "status": "success",
+  "message": "Successfully loaded and indexed X documents for user user_email@example.com",
+  "document_count": 100,
+  "document_types": {
+    "documents": 10,
+    "emails": 50,
+    "calendar_events": 30,
+    "next_week_events": 10
+  }
+}
+```
 
 ### Query Endpoint
 
@@ -68,9 +138,7 @@ Request body:
 {
   "query": "Your question here",
   "top_k": 5,
-  "filter_by": {
-    "user_id": "user_id_here"
-  }
+  "user_id": "user_email@example.com"
 }
 ```
 
@@ -125,25 +193,20 @@ python run.py
 
 This will start the FastAPI server on http://localhost:8000 with auto-reload enabled.
 
-## Testing
+## Error Handling
 
-You can test the API using the provided test script:
+The backend implements comprehensive error handling:
 
-```bash
-python test_api.py
-```
-
-Or using curl:
-
-```bash
-curl -X POST http://localhost:8000/query \
-  -H "Content-Type: application/json" \
-  -d '{"query": "What emails did I receive yesterday?", "filter_by": {"user_id": "your_user_id"}}'
-```
+- Database connection errors are caught and reported
+- OpenAI API errors are handled gracefully
+- User input validation with clear error messages
+- Detailed logging for all operations
+- Structured error responses for API endpoints
 
 ## Troubleshooting
 
 - **Database Connection Issues**: Verify your NeonDB connection string in the .env file.
 - **OpenAI API Issues**: Check your OpenAI API key and ensure you have sufficient credits.
 - **Empty Results**: Verify that the database contains data for the specified user_id.
-- **Slow Performance**: Consider reducing the MAX_CHUNKS value or optimizing database queries. 
+- **Slow Performance**: Consider reducing the MAX_CHUNKS value or optimizing database queries.
+- **Langfuse Connection Issues**: Verify your Langfuse API keys and host URL. 
