@@ -15,6 +15,46 @@ The backend follows a modular architecture:
 7. **Langfuse Integration**: Provides observability and tracing for all LLM operations.
 8. **Modular Query Processing**: Breaks down the query process into separate, observable functions.
 
+### Architecture Diagram
+
+```mermaid
+flowchart TB
+    subgraph "FastAPI Backend"
+        API[FastAPI Application]
+        RAG[RAG Pipeline]
+        DB_Conn[Database Connection]
+        Doc_Proc[Document Processing]
+        Embed_Gen[Embedding Generation]
+        User_Filter[User-Based Filtering]
+        Lang_Obs[Langfuse Observability]
+        Query_Proc[Modular Query Processing]
+        
+        API --> RAG
+        API --> DB_Conn
+        RAG --> Doc_Proc
+        RAG --> Embed_Gen
+        RAG --> User_Filter
+        RAG --> Query_Proc
+        Query_Proc --> Lang_Obs
+    end
+    
+    subgraph "External Services"
+        NeonDB[(NeonDB PostgreSQL)]
+        OpenAI[OpenAI API]
+        Langfuse[Langfuse]
+    end
+    
+    subgraph "Frontend"
+        Next[Next.js Frontend]
+    end
+    
+    DB_Conn <--> NeonDB
+    Embed_Gen <--> OpenAI
+    RAG <--> OpenAI
+    Lang_Obs <--> Langfuse
+    Next <--> API
+```
+
 ## Key Components
 
 - `main.py`: Main FastAPI application with API endpoints and RAG pipeline implementation.
@@ -40,6 +80,57 @@ The backend follows a modular architecture:
    - Format final answer
    - Return the response and relevant documents to the frontend
 
+### Data Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant Frontend
+    participant FastAPI
+    participant DB as NeonDB
+    participant OpenAI
+    participant Langfuse
+    
+    %% Startup Process
+    Note over FastAPI: Startup Process
+    FastAPI->>DB: Load documents, emails, events
+    DB-->>FastAPI: Return data
+    FastAPI->>FastAPI: Filter by user_id
+    FastAPI->>OpenAI: Generate embeddings
+    OpenAI-->>FastAPI: Return embeddings
+    FastAPI->>FastAPI: Index documents
+    
+    %% Query Process
+    Note over Frontend,FastAPI: Query Process
+    Frontend->>FastAPI: POST /query
+    
+    FastAPI->>Langfuse: Start trace
+    
+    FastAPI->>OpenAI: Generate query embeddings
+    OpenAI-->>FastAPI: Return embeddings
+    
+    FastAPI->>FastAPI: Retrieve documents
+    
+    FastAPI->>OpenAI: Check query relevance
+    OpenAI-->>FastAPI: Relevance assessment
+    
+    FastAPI->>OpenAI: Analyze query
+    OpenAI-->>FastAPI: Query analysis
+    
+    FastAPI->>FastAPI: Filter documents
+    
+    FastAPI->>FastAPI: Format context
+    
+    FastAPI->>OpenAI: Extract information
+    OpenAI-->>FastAPI: Extracted information
+    
+    FastAPI->>OpenAI: Format final answer
+    OpenAI-->>FastAPI: Final answer
+    
+    FastAPI->>Langfuse: End trace
+    
+    FastAPI-->>Frontend: Return response
+```
+
 ## User-Based Filtering
 
 The backend implements user-based filtering to ensure data privacy and security:
@@ -64,6 +155,25 @@ To enable Langfuse, set the following environment variables:
 - `LANGFUSE_SECRET_KEY`: Your Langfuse secret key
 - `LANGFUSE_HOST`: Your Langfuse host URL (default: https://cloud.langfuse.com)
 
+### Langfuse Tracing Diagram
+
+```mermaid
+gantt
+    title Langfuse Trace Example
+    dateFormat  s
+    axisFormat %S
+    
+    section Query Pipeline
+    generate_query_embeddings    :a1, 0, 0.2s
+    retrieve_documents           :a2, after a1, 0.3s
+    check_query_relevance        :a3, after a2, 0.5s
+    analyze_query                :a4, after a3, 0.7s
+    filter_documents             :a5, after a4, 0.2s
+    format_context               :a6, after a5, 0.3s
+    extract_information          :a7, after a6, 0.8s
+    format_final_answer          :a8, after a7, 0.6s
+```
+
 ## Modular Query Pipeline
 
 The query process is broken down into separate functions, each with its own observability:
@@ -82,6 +192,34 @@ This modular approach provides:
 - Detailed performance metrics for each step
 - Improved code maintainability
 - Easier debugging and testing
+
+### Query Pipeline Diagram
+
+```mermaid
+flowchart TD
+    Query[User Query] --> QEmbed[generate_query_embeddings]
+    QEmbed --> Retrieve[retrieve_documents]
+    Retrieve --> Relevance[check_query_relevance]
+    Relevance -->|Relevant| Analyze[analyze_query]
+    Relevance -->|Not Relevant| NoData[Return No Data Response]
+    Analyze --> Filter[filter_documents]
+    Filter --> Format[format_context]
+    Format --> Extract[extract_information]
+    Extract --> Final[format_final_answer]
+    Final --> Response[Return Response]
+    
+    style QEmbed fill:#f9f,stroke:#333,stroke-width:2px
+    style Retrieve fill:#bbf,stroke:#333,stroke-width:2px
+    style Relevance fill:#f9f,stroke:#333,stroke-width:2px
+    style Analyze fill:#f9f,stroke:#333,stroke-width:2px
+    style Filter fill:#bbf,stroke:#333,stroke-width:2px
+    style Format fill:#bbf,stroke:#333,stroke-width:2px
+    style Extract fill:#f9f,stroke:#333,stroke-width:2px
+    style Final fill:#f9f,stroke:#333,stroke-width:2px
+    
+    classDef llmNode fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef processingNode fill:#bbf,stroke:#333,stroke-width:2px;
+```
 
 ## Environment Variables
 
@@ -183,6 +321,41 @@ Response:
 }
 ```
 
+### API Endpoints Diagram
+
+```mermaid
+classDiagram
+    class FastAPIApplication {
+        +GET /health
+        +POST /query
+        +POST /load_user_data
+    }
+    
+    class HealthEndpoint {
+        +check_database_connection()
+        +check_openai_connection()
+        +count_documents()
+        +get_user_filtering_status()
+    }
+    
+    class QueryEndpoint {
+        +validate_request()
+        +process_query()
+        +format_response()
+    }
+    
+    class LoadUserDataEndpoint {
+        +validate_user_id()
+        +load_user_data()
+        +index_documents()
+        +format_response()
+    }
+    
+    FastAPIApplication --> HealthEndpoint
+    FastAPIApplication --> QueryEndpoint
+    FastAPIApplication --> LoadUserDataEndpoint
+```
+
 ## Running the Backend
 
 From the project root directory:
@@ -202,6 +375,31 @@ The backend implements comprehensive error handling:
 - User input validation with clear error messages
 - Detailed logging for all operations
 - Structured error responses for API endpoints
+
+### Error Handling Flow
+
+```mermaid
+flowchart TD
+    Request[API Request] --> Validation{Input Validation}
+    Validation -->|Valid| Processing[Process Request]
+    Validation -->|Invalid| ValidationError[Return Validation Error]
+    
+    Processing --> DBConnection{DB Connection}
+    DBConnection -->|Success| DBQuery[Query Database]
+    DBConnection -->|Failure| DBError[Return DB Error]
+    
+    DBQuery --> OpenAICall{OpenAI API Call}
+    OpenAICall -->|Success| GenerateResponse[Generate Response]
+    OpenAICall -->|Failure| OpenAIError[Return OpenAI Error]
+    
+    GenerateResponse --> Response[Return Response]
+    
+    ValidationError --> Log[Log Error]
+    DBError --> Log
+    OpenAIError --> Log
+    
+    Log --> Langfuse[Send to Langfuse]
+```
 
 ## Troubleshooting
 

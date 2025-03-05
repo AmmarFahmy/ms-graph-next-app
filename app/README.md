@@ -14,6 +14,50 @@ The frontend follows a component-based architecture:
 6. **Robust Error Handling**: Comprehensive error handling and data validation.
 7. **Local Storage**: Persistent storage for chat history and sync status.
 
+### Architecture Diagram
+
+```mermaid
+flowchart TB
+    subgraph "Next.js Frontend"
+        Next[Next.js Application]
+        Auth[Microsoft Authentication]
+        Graph[Microsoft Graph API Integration]
+        Backend[Backend API Integration]
+        UI[UI Components]
+        Error[Error Handling]
+        Storage[Local Storage]
+        
+        Next --> Auth
+        Next --> Graph
+        Next --> Backend
+        Next --> UI
+        Next --> Error
+        Next --> Storage
+        
+        subgraph "UI Components"
+            Assistant[Assistant.tsx]
+            EmailList[EmailList.tsx]
+            Calendar[Calendar.tsx]
+            DocUpload[DocumentUpload.tsx]
+            
+            UI --> Assistant
+            UI --> EmailList
+            UI --> Calendar
+            UI --> DocUpload
+        end
+    end
+    
+    subgraph "External Services"
+        MS_Auth[Microsoft Identity]
+        MS_Graph[Microsoft Graph API]
+        FastAPI[FastAPI Backend]
+    end
+    
+    Auth <--> MS_Auth
+    Graph <--> MS_Graph
+    Backend <--> FastAPI
+```
+
 ## Key Components
 
 - `page.tsx`: Main application page with layout and component composition.
@@ -25,6 +69,64 @@ The frontend follows a component-based architecture:
 - `utils/`: Utility functions for API calls, authentication, etc.
 - `hooks/`: Custom React hooks for state management and API integration.
 - `api/`: API route handlers for server-side operations.
+
+### Component Diagram
+
+```mermaid
+classDiagram
+    class Page {
+        +layout()
+        +render()
+    }
+    
+    class Assistant {
+        -messages: Message[]
+        -isLoading: boolean
+        +sendMessage(text: string)
+        +clearConversation()
+        +render()
+    }
+    
+    class EmailList {
+        -emails: Email[]
+        -isLoading: boolean
+        -page: number
+        +fetchEmails()
+        +syncEmails()
+        +searchEmails(query: string)
+        +render()
+    }
+    
+    class Calendar {
+        -events: Event[]
+        -isLoading: boolean
+        +fetchEvents()
+        +syncEvents()
+        +render()
+    }
+    
+    class DocumentUpload {
+        -documents: Document[]
+        -isUploading: boolean
+        +uploadDocument(file: File)
+        +deleteDocument(id: string)
+        +render()
+    }
+    
+    class AuthProvider {
+        -isAuthenticated: boolean
+        -user: User
+        +login()
+        +logout()
+        +getToken()
+    }
+    
+    Page --> Assistant
+    Page --> EmailList
+    Page --> Calendar
+    Page --> DocumentUpload
+    Page --> AuthProvider
+```
 
 ## Data Flow
 
@@ -44,6 +146,87 @@ The frontend follows a component-based architecture:
    - Backend processes the query and returns a response
    - Response is displayed in the chat interface
    - Chat history is persisted in local storage
+
+### Authentication Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant MSAL as Microsoft Authentication
+    participant Graph as Microsoft Graph API
+    participant Backend
+    
+    User->>Frontend: Click Login
+    Frontend->>MSAL: Initiate login
+    MSAL->>User: Redirect to Microsoft login
+    User->>MSAL: Enter credentials
+    MSAL->>Frontend: Return auth token
+    Frontend->>Frontend: Store token
+    
+    Frontend->>Graph: Request user info
+    Graph->>Frontend: Return user profile
+    
+    Frontend->>Backend: Send user ID
+    Backend->>Frontend: Confirm user registration
+    
+    Frontend->>User: Display authenticated UI
+```
+
+### Data Retrieval Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Graph as Microsoft Graph API
+    participant Backend
+    
+    User->>Frontend: Navigate to Emails/Calendar
+    
+    Frontend->>Graph: Request emails/events
+    Graph->>Frontend: Return data
+    
+    Frontend->>Frontend: Process & validate data
+    Frontend->>User: Display data
+    
+    User->>Frontend: Click Sync
+    Frontend->>Backend: Send data for sync
+    Backend->>Frontend: Confirm sync status
+    
+    alt Error occurs
+        Graph->>Frontend: Return error/malformed data
+        Frontend->>Frontend: Handle error
+        Frontend->>User: Display error message
+    end
+```
+
+### Query Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Assistant
+    participant Backend
+    participant LocalStorage
+    
+    User->>Assistant: Enter query
+    Assistant->>Assistant: Update UI state
+    
+    Assistant->>Backend: Send query with user ID
+    Backend->>Assistant: Process and return response
+    
+    Assistant->>Assistant: Format response
+    Assistant->>User: Display response
+    
+    Assistant->>LocalStorage: Save conversation
+    
+    alt Clear conversation
+        User->>Assistant: Click Clear
+        Assistant->>Assistant: Reset conversation
+        Assistant->>LocalStorage: Clear saved conversation
+    end
+```
 
 ## Environment Variables
 
@@ -101,6 +284,47 @@ The application uses Microsoft Authentication Library (MSAL) for user authentica
 - Automatic data validation and normalization
 - Persistent sync status using local storage
 
+### Features Diagram
+
+```mermaid
+mindmap
+  root((Frontend Features))
+    Authentication
+      ::icon(fa fa-lock)
+      Microsoft MSAL
+      Secure token handling
+      User-specific access
+    Email Integration
+      ::icon(fa fa-envelope)
+      View emails
+      Search functionality
+      Sync to backend
+      Error handling
+    Calendar Integration
+      ::icon(fa fa-calendar)
+      View events
+      Next week preview
+      Sync to backend
+      Error handling
+    Document Management
+      ::icon(fa fa-file)
+      Upload documents
+      Process for RAG
+      Manage documents
+    AI Assistant
+      ::icon(fa fa-robot)
+      Natural language queries
+      Context-aware responses
+      Persistent chat history
+      Markdown support
+    Database Sync
+      ::icon(fa fa-database)
+      One-click sync
+      Progress indicators
+      Error reporting
+      Data validation
+```
+
 ## Error Handling and Data Validation
 
 The application implements comprehensive error handling and data validation:
@@ -110,6 +334,26 @@ The application implements comprehensive error handling and data validation:
 - **Default Values**: Missing or malformed data is replaced with sensible defaults
 - **User Feedback**: Clear error messages are displayed to the user when issues occur
 - **Defensive Programming**: Optional chaining and nullish coalescing operators prevent runtime errors
+
+### Error Handling Flow
+
+```mermaid
+flowchart TD
+    API[API Call] --> Try{Try/Catch}
+    Try -->|Success| Validate[Validate Data]
+    Try -->|Error| HandleAPIError[Handle API Error]
+    
+    Validate --> DataCheck{Data Valid?}
+    DataCheck -->|Yes| Process[Process Data]
+    DataCheck -->|No| HandleDataError[Handle Data Error]
+    
+    HandleAPIError --> LogError[Log Error]
+    HandleDataError --> LogError
+    
+    LogError --> UserFeedback[Display User Feedback]
+    
+    Process --> UI[Update UI]
+```
 
 ## Deployment
 
@@ -139,6 +383,18 @@ For production deployment, update your Azure App registration:
 2. Ensure all required API permissions are granted
 3. Configure authentication settings for production
 
+### Deployment Flow
+
+```mermaid
+flowchart LR
+    Dev[Development] --> Build[Build]
+    Build --> Test[Test]
+    Test --> Deploy[Deploy to Vercel]
+    Deploy --> Config[Configure Environment]
+    Config --> Azure[Update Azure App]
+    Azure --> Live[Live Application]
+```
+
 ## Running the Frontend
 
 From the project root directory:
@@ -163,4 +419,29 @@ npm start
 - **Backend Connection Issues**: Ensure the backend server is running and accessible at the URL specified in NEXT_PUBLIC_BACKEND_URL.
 - **UI Rendering Issues**: Check browser console for errors and verify that all dependencies are installed correctly.
 - **Data Sync Issues**: If synchronization fails, check the browser console for detailed error messages and ensure the backend database is properly configured.
-- **Missing Email Data**: Some email providers may return data in different formats; the application includes robust error handling to manage these variations. 
+- **Missing Email Data**: Some email providers may return data in different formats; the application includes robust error handling to manage these variations.
+
+### Troubleshooting Flow
+
+```mermaid
+flowchart TD
+    Issue[Issue Detected] --> Category{Issue Category}
+    
+    Category -->|Authentication| AuthCheck[Check Azure Settings]
+    Category -->|Graph API| PermCheck[Check Permissions]
+    Category -->|Backend| BackendCheck[Check Backend Connection]
+    Category -->|UI| ConsoleCheck[Check Browser Console]
+    Category -->|Data Sync| SyncCheck[Check Sync Logs]
+    
+    AuthCheck --> AuthFix[Update Azure Settings]
+    PermCheck --> PermFix[Grant Missing Permissions]
+    BackendCheck --> BackendFix[Ensure Backend Running]
+    ConsoleCheck --> UIFix[Fix UI Issues]
+    SyncCheck --> SyncFix[Fix Data Format Issues]
+    
+    AuthFix --> Resolved[Issue Resolved]
+    PermFix --> Resolved
+    BackendFix --> Resolved
+    UIFix --> Resolved
+    SyncFix --> Resolved
+``` 
