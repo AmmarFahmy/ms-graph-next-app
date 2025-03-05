@@ -138,7 +138,7 @@ export default function Home() {
                 )}
                 {!isAuthenticated ? (
                     <div className={styles.signInContainer}>
-                        <h1 className={styles.title}>LLM Twin</h1>
+                        <h1 className={styles.title}>MetaSelf</h1>
                         <button 
                             onClick={signIn} 
                             className={styles.signInButton}
