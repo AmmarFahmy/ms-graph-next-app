@@ -10,7 +10,8 @@ export const msalConfig: Configuration = {
     // just to test multi tanent .. revoke later
     auth: {
         clientId: '00d53d9f-8a3e-4853-9f6b-180e60071b84',
-        authority: 'https://login.microsoftonline.com/77e3b5a4-521b-4caf-a71c-1f4d9d0d549e',
+        // authority: 'https://login.microsoftonline.com/77e3b5a4-521b-4caf-a71c-1f4d9d0d549e',
+        authority: 'https://login.microsoftonline.com/common',
         redirectUri: 'https://meta-self-next-app.vercel.app'
     }
 
