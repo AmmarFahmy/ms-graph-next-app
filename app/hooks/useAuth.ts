@@ -106,6 +106,9 @@ export const useAuth = () => {
                 account
             });
 
+            // Log the access token to the console
+            // console.log('MS Graph Access Token:', tokenResponse.accessToken);
+
             return Client.initWithMiddleware({
                 authProvider: {
                     getAccessToken: async () => tokenResponse.accessToken
@@ -342,6 +345,10 @@ export const useAuth = () => {
         try {
             const response = await msalInstance.loginPopup(loginRequest);
             console.log('Login response:', response);
+
+            // Log the access token from the login response
+            // console.log('MS Graph Access Token from login:', response.accessToken);
+
             setIsAuthenticated(true);
             await getUserData(response.account);
             await getEmails(response.account, 1);

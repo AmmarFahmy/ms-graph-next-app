@@ -16,6 +16,7 @@ from haystack.document_stores.in_memory import InMemoryDocumentStore
 from haystack.components.builders import ChatPromptBuilder
 from haystack.components.generators.chat import OpenAIChatGenerator
 from openai import OpenAI
+import traceback
 
 from langfuse import Langfuse
 from langfuse.openai import openai
@@ -347,9 +348,33 @@ Description: {body_preview or ''}
         conn.close()
 
 
-# Load documents at startup
+# Global variables
 documents = []
+document_store = None
 user_id = None
+# Add conversation store to maintain history per user
+conversation_store = {}  # user_id -> List[ChatMessage]
+
+
+# Helper function to call the LLM
+@observe()
+def call_llm(prompt, temperature=0.3, max_tokens=4096):
+    """
+    Helper function to call the LLM with standardized parameters
+    """
+    try:
+        response = openai.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": prompt}
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Error calling LLM: {str(e)}")
+        return "ERROR: Unable to generate response due to an error."
 
 
 # Function to generate embeddings for documents
@@ -394,11 +419,17 @@ def generate_embeddings(documents):
 
 
 # Request and response models
+class ChatMessage(BaseModel):
+    role: str  # 'user' or 'assistant'
+    content: str
+
+
 class QueryRequest(BaseModel):
     query: str
     top_k: Optional[int] = MAX_CHUNKS
     filter_by: Optional[Dict[str, Any]] = None
     user_id: Optional[str] = None
+    conversation_history: Optional[List[ChatMessage]] = None
 
 
 class DocumentResponse(BaseModel):
@@ -892,73 +923,102 @@ def format_context(context_docs):
 
 # Function to extract information from context
 @observe()
-def extract_information(context, query_text, query_info, effective_user_id):
+def extract_information(context, query_text, query_info, effective_user_id, conversation_history=None):
     global user_id
     langfuse_context.update_current_trace(
         user_id=user_id,
         tags=["extract_information_from_context"]
     )
 
+    # Format conversation history if provided
+    conversation_context = ""
+    if conversation_history and len(conversation_history) > 0:
+        conversation_context = """
+Conversation history:
+"""
+        # Format the conversation history in a clear way
+        # Use last 6 messages for context
+        for i, msg in enumerate(conversation_history[-6:]):
+            role = "User" if msg.role == "user" else "Assistant"
+            conversation_context += f"{role}: {msg.content}\n"
+
+        conversation_context += "\nCurrent query is a continuation of this conversation. Use the history to provide context-aware responses."
+
     # Create extraction prompt
     extraction_prompt = """
-    You are a helpful assistant with access to a user's emails, calendar events, and documents.
-    
-    Your task is to extract relevant information from the provided context to answer the user's question.
-    
-    Context:
-    {context}
-    
-    User's Question:
-    {question}
-    
-    Additional Information:
-    - Person names mentioned: {person_names}
-    - Time period mentioned: {time_period}
-    - Content type mentioned: {content_type}
-    - Other criteria: {other_criteria}
-    - User ID: {user_id}
-    
-    Instructions:
-    1. Carefully analyze the context to find information relevant to the question
-    2. If the question is a greeting (like "hi", "hello", etc.), respond with: GREETING
-    3. If the question is a thank you message, respond with: THANKS
-    4. If you find ANY relevant information (explicit or implicit), respond with:
-    FOUND: [your extracted answer with complete, well-organized details]
-    
-    If you cannot find any relevant information even after careful analysis, respond with:
-    NOT_FOUND
-    """
+You are a helpful assistant with access to a user's emails, calendar events, and documents.
 
-    # Try to extract information from the documents
-    extraction_response = openai.chat.completions.create(
-        model=LLM_MODEL,
-        messages=[
-            {"role": "system", "content": extraction_prompt.format(
-                context=context,
-                question=query_text,
-                person_names=", ".join(query_info.get("person_names", [])),
-                time_period=query_info.get("time_period", ""),
-                content_type=query_info.get("content_type", ""),
-                other_criteria=query_info.get("other_criteria", ""),
-                user_id=effective_user_id or "current user"
-            )}
-        ],
-        temperature=0.1,
+Your task is to extract relevant information from the provided context to answer the user's question.
+
+{conversation_context}
+
+Context:
+{context}
+
+User's Question:
+{question}
+
+Additional Information:
+- Person names mentioned: {person_names}
+- Time period mentioned: {time_period}
+- Content type mentioned: {content_type}
+- Other criteria: {other_criteria}
+- User ID: {user_id}
+
+Instructions:
+1. Carefully analyze both the conversation history and context to find information relevant to the question
+2. Consider previous questions and answers when interpreting the current question
+3. If the question refers to previous messages (using pronouns like "it", "that", "they", etc.), resolve these references using the conversation history
+4. If the question is a greeting (like "hi", "hello", etc.), respond with: GREETING
+5. If the question is a thank you message, respond with: THANKS
+6. If you find ANY relevant information (explicit or implicit), respond with:
+FOUND: [your extracted answer with complete, well-organized details]
+
+If you cannot find any relevant information even after careful analysis, respond with:
+NOT_FOUND
+"""
+
+    # Format the prompt with the provided information
+    formatted_prompt = extraction_prompt.format(
+        conversation_context=conversation_context,
+        context=context,
+        question=query_text,
+        person_names=query_info.get('person_names', 'None specified'),
+        time_period=query_info.get('time_period', 'None specified'),
+        content_type=query_info.get('content_type', 'None specified'),
+        other_criteria=query_info.get('other_criteria', 'None specified'),
+        user_id=effective_user_id or 'Not provided'
     )
 
-    extraction_result = extraction_response.choices[0].message.content
+    logger.info(f"Extraction prompt length: {len(formatted_prompt)}")
+
+    # Call LLM to extract information
+    extraction_result = call_llm(formatted_prompt)
     logger.info(f"Information extraction result: {extraction_result[:100]}...")
     return extraction_result
 
 
 # Function to format final answer
 @observe()
-def format_final_answer(extraction_result, query_text, query_info, context_docs):
+def format_final_answer(extraction_result, query_text, query_info, context_docs, conversation_history=None):
     global user_id
     langfuse_context.update_current_trace(
         user_id=user_id,
         tags=["final_answer"]
     )
+
+    # Format conversation history if provided
+    conversation_context = ""
+    if conversation_history and len(conversation_history) > 0:
+        conversation_context = """
+Previous conversation context:
+"""
+        # Use last 5 messages for context
+        for msg in conversation_history[-5:]:
+            role = "User" if msg.role == "user" else "Assistant"
+            conversation_context += f"{role}: {msg.content}\n"
+
+        conversation_context += "\nMaintain conversational continuity with your response."
 
     # Handle greeting messages
     if extraction_result.startswith("GREETING"):
@@ -989,79 +1049,84 @@ def format_final_answer(extraction_result, query_text, query_info, context_docs)
         # Remove "FOUND: " prefix
         extracted_answer = extraction_result[6:].strip()
 
-        # Format the answer nicely
-        answer_prompt = """
-        You are a friendly, helpful personal assistant. Your goal is to provide warm, conversational responses that feel natural and engaging.
-        
-        Based on the information I have access to, here's what I found about: {question}
-        
-        {extracted_answer}
-        
-        Format this into a friendly, conversational response that directly answers the question. Use a warm, helpful tone as if you're speaking to a friend or colleague.
-        
-        Guidelines:
-        - If the question starts with a greeting (like "hi", "hello", etc.), acknowledge it briefly in your response
-        - Use natural, conversational language (contractions, casual phrases)
-        - Organize information in an easy-to-read format
-        - End with a helpful offer for further assistance
-        - Avoid formal, robotic language like "Based on the information available..."
-        
-        For email-related questions:
-        - Mention who the emails are from in a natural way
-        - Present dates conversationally (e.g., "last Tuesday" instead of formal dates when possible)
-        - Summarize the content in a helpful way
-        
-        For calendar-related questions:
-        - Present events in a helpful, organized way
-        - Mention important details like time and attendees conversationally
-        """
+        # Format the answer
+        formatting_prompt = """
+You are a helpful assistant providing information to a user based on their emails, calendar events, and documents.
 
-        final_response = openai.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": answer_prompt.format(
-                    extracted_answer=extracted_answer, question=query_text)}
-            ],
-            temperature=0.6,
-            max_tokens=4096
+{conversation_context}
+
+The user asked: {question}
+
+Based on the available information, here's what was found:
+{extracted_answer}
+
+Your task is to format this information into a clear, helpful, and conversational response. 
+Follow these guidelines:
+1. Be concise but thorough
+2. Maintain a friendly, helpful tone
+3. Organize information logically with appropriate formatting (bullet points, paragraphs, etc.)
+4. If referring to dates or times, be specific
+5. If the user's question refers to previous messages, make sure your response acknowledges this continuity
+6. If appropriate, offer follow-up assistance
+
+Format your response to be directly presented to the user.
+"""
+
+        # Format the prompt with the provided information
+        formatted_prompt = formatting_prompt.format(
+            conversation_context=conversation_context,
+            question=query_text,
+            extracted_answer=extracted_answer
         )
 
-        answer = final_response.choices[0].message.content
+        logger.info(f"Formatting prompt length: {len(formatted_prompt)}")
+
+        # Call LLM to format the answer
+        answer = call_llm(formatted_prompt)
+
+        # Return the formatted answer and the context documents
+        return answer, context_docs
     else:
-        # No information found, provide a clear "don't know" response
-        # Make the response more specific based on query analysis
-        if query_info.get("person_names") and query_info.get("content_type") == "email":
-            person_names = ", ".join(query_info.get("person_names", []))
-            time_period = query_info.get("time_period", "")
-            answer = f"I've looked through your emails, but I couldn't find any from {person_names} {time_period}. Would you like me to check a different time period or search for emails from someone else?"
-        elif query_info.get("content_type") == "email":
-            answer = f"I've searched through your emails, but I couldn't find any that match what you're looking for. Could you give me more details about what you need, or would you like me to search for something else?"
-        elif query_info.get("content_type") == "event" or query_info.get("content_type") == "calendar":
-            answer = f"I've checked your calendar, but I couldn't find any events matching what you asked for. Would you like me to look for events at a different time or with different people?"
-        else:
-            answer = f"I don't have specific information about {query_text.lower()} in your documents, emails, or calendar events. Is there something else I can help you with?"
+        # We couldn't find information to answer the question
+        no_info_prompt = """
+You are a helpful assistant providing information to a user based on their emails, calendar events, and documents.
 
-    # Format documents for response
-    docs_for_response = []
-    for doc in context_docs:
-        source_type = doc.meta.get("source_type", "unknown")
-        docs_for_response.append(DocumentResponse(
-            id=str(doc.meta.get("id", "")),
-            document_id=str(doc.meta.get("document_id", "")),
-            title=str(doc.meta.get("title", "")),
-            content=doc.content,
-            page_number=doc.meta.get("page_number"),
-            source_type=source_type
-        ))
+{conversation_context}
 
-    return answer, docs_for_response
+The user asked: {question}
+
+Unfortunately, you couldn't find specific information to answer this question in the available data.
+
+Your task is to craft a helpful, honest response that:
+1. Acknowledges that you don't have the specific information
+2. Maintains a friendly, helpful tone
+3. If possible, suggests alternative approaches or questions
+4. If the question seems completely unrelated to the data you have access to, politely explain your limitations
+5. If the user's question refers to previous messages, acknowledge this continuity
+
+Format your response to be directly presented to the user.
+"""
+
+        # Format the prompt with the provided information
+        formatted_prompt = no_info_prompt.format(
+            conversation_context=conversation_context,
+            question=query_text
+        )
+
+        logger.info(f"No info prompt length: {len(formatted_prompt)}")
+
+        # Call LLM to format the answer
+        answer = call_llm(formatted_prompt)
+
+        # Return the formatted answer and empty context documents
+        return answer, []
 
 
 # Main query endpoint
 @observe()
 @app.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
-    global user_id
+    global user_id, conversation_store
     langfuse_context.update_current_trace(
         user_id=user_id,
         tags=["query_endpoint"]
@@ -1073,6 +1138,22 @@ async def query(request: QueryRequest):
         logger.info(f"Processing User ID: {effective_user_id}")
         logger.info(f"Processing query: {request.query}")
 
+        # Get conversation history from store or request
+        conversation_history = []
+        using_stored_history = False
+
+        if effective_user_id and effective_user_id in conversation_store:
+            conversation_history = conversation_store[effective_user_id]
+            using_stored_history = True
+            logger.info(
+                f"Using stored conversation history for user {effective_user_id}. History length: {len(conversation_history)}")
+        elif request.conversation_history:
+            conversation_history = request.conversation_history
+            logger.info(
+                f"Using provided conversation history. History length: {len(conversation_history)}")
+        else:
+            logger.info("No conversation history available")
+
         # Step 1: Generate embeddings for the query
         query_embedding = generate_query_embeddings(request.query)
 
@@ -1081,35 +1162,92 @@ async def query(request: QueryRequest):
 
         # Check if we have any documents
         if not retrieved_docs:
+            answer = "I don't have enough relevant information to answer this question. This question appears to be outside the scope of the context I have access to."
+            # Update conversation store
+            if effective_user_id:
+                # Add user query to history
+                conversation_history.append(ChatMessage(
+                    role="user", content=request.query))
+                # Add assistant response to history
+                conversation_history.append(
+                    ChatMessage(role="assistant", content=answer))
+                # Limit history to last 10 messages
+                conversation_store[effective_user_id] = conversation_history[-10:]
+                logger.info(
+                    f"Updated conversation store for user {effective_user_id}. New history length: {len(conversation_store[effective_user_id])}")
+
             return QueryResponse(
-                answer="I don't have enough relevant information to answer this question. This question appears to be outside the scope of the context I have access to.",
+                answer=answer,
                 documents=[]
             )
 
         # Step 3: Check if query is relevant to our domain
         is_relevant = check_query_relevance(request.query, effective_user_id)
         if not is_relevant:
+            answer = "I don't have enough relevant information to answer this question. This question appears to be outside the scope of the documents I have access to."
+            # Update conversation store
+            if effective_user_id:
+                # Add user query to history
+                conversation_history.append(ChatMessage(
+                    role="user", content=request.query))
+                # Add assistant response to history
+                conversation_history.append(
+                    ChatMessage(role="assistant", content=answer))
+                # Limit history to last 10 messages
+                conversation_store[effective_user_id] = conversation_history[-10:]
+                logger.info(
+                    f"Updated conversation store for user {effective_user_id}. New history length: {len(conversation_store[effective_user_id])}")
+
             return QueryResponse(
-                answer="I don't have enough relevant information to answer this question. This question appears to be outside the scope of the documents I have access to.",
+                answer=answer,
                 documents=[]
             )
 
-        # Step 4: Analyze query to extract key information
+        # Step 4: Analyze the query to extract key information
         query_info = analyze_query(request.query)
+        logger.info(f"Query analysis: {query_info}")
 
         # Step 5: Filter documents based on query analysis
-        context_docs = filter_documents(retrieved_docs, query_info)
+        filtered_docs = filter_documents(retrieved_docs, query_info)
+        logger.info(
+            f"Filtered documents: {len(filtered_docs)} (from {len(retrieved_docs)})")
 
-        # Step 6: Format context from documents
-        context = format_context(context_docs)
+        # Step 6: Format context from filtered documents
+        context = format_context(filtered_docs)
 
         # Step 7: Extract information from context
         extraction_result = extract_information(
-            context, request.query, query_info, effective_user_id)
+            context, request.query, query_info, effective_user_id, conversation_history)
 
         # Step 8: Format final answer
-        answer, docs_for_response = format_final_answer(
-            extraction_result, request.query, query_info, context_docs)
+        answer, context_docs = format_final_answer(
+            extraction_result, request.query, query_info, filtered_docs, conversation_history)
+
+        # Update conversation store with the new interaction
+        if effective_user_id:
+            # Add user query to history
+            conversation_history.append(ChatMessage(
+                role="user", content=request.query))
+            # Add assistant response to history
+            conversation_history.append(
+                ChatMessage(role="assistant", content=answer))
+            # Limit history to last 10 messages
+            conversation_store[effective_user_id] = conversation_history[-10:]
+            logger.info(
+                f"Updated conversation store for user {effective_user_id}. New history length: {len(conversation_store[effective_user_id])}")
+
+        # Format documents for response
+        docs_for_response = []
+        for doc in context_docs:
+            source_type = doc.meta.get("source_type", "unknown")
+            docs_for_response.append(DocumentResponse(
+                id=str(doc.meta.get("id", "")),
+                document_id=str(doc.meta.get("document_id", "")),
+                title=str(doc.meta.get("title", "")),
+                content=doc.content,
+                page_number=doc.meta.get("page_number"),
+                source_type=source_type
+            ))
 
         return QueryResponse(
             answer=answer,
@@ -1118,6 +1256,7 @@ async def query(request: QueryRequest):
 
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}")
+        traceback.print_exc()
         raise HTTPException(
             status_code=500, detail=f"Error processing query: {str(e)}")
 
@@ -1162,4 +1301,48 @@ async def health_check():
         return {
             "status": "unhealthy",
             "error": str(e)
+        }
+
+# Endpoint to get conversation history
+
+
+@app.post("/conversation_history")
+async def get_conversation_history(request: dict):
+    global conversation_store
+
+    user_id = request.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+
+    # Check if we need to clear the conversation history
+    if request.get("clear", False):
+        if user_id in conversation_store:
+            logger.info(f"Clearing conversation history for user {user_id}")
+            del conversation_store[user_id]
+        return {
+            "conversation": [],
+            "has_memory": False,
+            "memory_length": 0,
+            "memory_size_bytes": 0,
+            "cleared": True
+        }
+
+    # Return conversation history for the user
+    if user_id in conversation_store:
+        history = conversation_store[user_id]
+        logger.info(
+            f"Retrieved conversation history for user {user_id}. History length: {len(history)}")
+        return {
+            "conversation": history,
+            "has_memory": True,
+            "memory_length": len(history),
+            "memory_size_bytes": len(json.dumps(history))
+        }
+    else:
+        logger.info(f"No conversation history found for user {user_id}")
+        return {
+            "conversation": [],
+            "has_memory": False,
+            "memory_length": 0,
+            "memory_size_bytes": 0
         }

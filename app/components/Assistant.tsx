@@ -62,6 +62,9 @@ export default function Assistant({ userId }: { userId: string }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isRagSynced, setIsRagSynced] = useState(false);
   const [isRagSyncing, setIsRagSyncing] = useState(false);
+  const [hasConversationMemory, setHasConversationMemory] = useState(false);
+  const [memoryDetails, setMemoryDetails] = useState<{ length: number, size: number } | null>(null);
+  const [showMemoryDetails, setShowMemoryDetails] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [retryingMessage, setRetryingMessage] = useState<string | null>(null);
@@ -111,6 +114,24 @@ export default function Assistant({ userId }: { userId: string }) {
     }
   }, [isRagSynced]);
 
+  // Update conversation memory indicator when messages change
+  useEffect(() => {
+    // Check if we have more than just the initial greeting message
+    setHasConversationMemory(messages.length > 1);
+    
+    // Update memory details
+    if (messages.length > 1) {
+      // Estimate size in bytes (rough calculation)
+      const messagesJson = JSON.stringify(messages);
+      setMemoryDetails({
+        length: messages.length,
+        size: Math.round(messagesJson.length / 1024) // Size in KB
+      });
+    } else {
+      setMemoryDetails(null);
+    }
+  }, [messages]);
+
   // Clear conversation history
   const handleClearConversation = () => {
     if (window.confirm('Are you sure you want to start a new conversation? This will clear your current chat history.')) {
@@ -121,7 +142,32 @@ export default function Assistant({ userId }: { userId: string }) {
           timestamp: new Date()
         }
       ]);
-      localStorage.removeItem(`chat_history_${userId}`);
+      setHasConversationMemory(false);
+      setMemoryDetails(null);
+      setShowMemoryDetails(false);
+      
+      // Clear localStorage
+      if (userId) {
+        localStorage.removeItem(`chat_history_${userId}`);
+      }
+      
+      // Also clear the conversation on the backend
+      if (userId) {
+        fetch('http://127.0.0.1:8000/conversation_history', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            user_id: userId,
+            clear: true
+          }),
+        }).catch(error => {
+          console.error('Error clearing conversation history on backend:', error);
+        });
+      }
+      
+      toast.success('Started a new conversation');
     }
   };
 
@@ -132,7 +178,10 @@ export default function Assistant({ userId }: { userId: string }) {
     setIsRagSyncing(true);
     
     try {
-      const response = await fetch('https://api.know360.io/llm_twin/load_user_data', {
+      const response = await fetch('http://127.0.0.1:8000/load_user_data', {
+      
+      //uncomment this to push to the github repo
+      // const response = await fetch('https://api.know360.io/llm_twin/load_user_data', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -210,7 +259,10 @@ export default function Assistant({ userId }: { userId: string }) {
     setIsLoading(true);
     
     try {
-      const response = await fetch('https://api.know360.io/llm_twin/query', {
+      const response = await fetch('http://127.0.0.1:8000/query', {
+      
+      //uncomment this to push to the github repo
+      // const response = await fetch('https://api.know360.io/llm_twin/query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -271,14 +323,24 @@ export default function Assistant({ userId }: { userId: string }) {
     }
     
     try {
-      const response = await fetch('https://api.know360.io/llm_twin/query', {
+      // Convert previous messages to the format expected by the backend
+      const conversationHistory = messages.slice(-6).map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+      
+      const response = await fetch('http://127.0.0.1:8000/query', {
+      
+      //uncomment this to push to the github repo
+      // const response = await fetch('https://api.know360.io/llm_twin/query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           query: userMessage.content,
-          filter_by: { user_id: userId }
+          filter_by: { user_id: userId },
+          conversation_history: conversationHistory
         }),
       });
       
@@ -347,6 +409,50 @@ export default function Assistant({ userId }: { userId: string }) {
                 </>
               )}
             </button>
+          )}
+          {isRagSynced && (
+            <div 
+              className={`ml-2 px-4 py-2 rounded-lg flex items-center text-sm ${hasConversationMemory ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'} cursor-pointer relative`}
+              onClick={() => setShowMemoryDetails(!showMemoryDetails)}
+            >
+              <svg 
+                xmlns="http://www.w3.org/2000/svg" 
+                className={`h-5 w-5 mr-2 ${hasConversationMemory ? 'text-green-600' : 'text-gray-400'}`} 
+                viewBox="0 0 20 20" 
+                fill="currentColor"
+              >
+                <path 
+                  fillRule="evenodd" 
+                  d="M3 5a2 2 0 012-2h10a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm11 1H6v8l4-2 4 2V6z" 
+                  clipRule="evenodd" 
+                />
+              </svg>
+              {hasConversationMemory ? 'Memory Active' : 'No Memory'}
+              
+              {/* Memory Details Tooltip */}
+              {showMemoryDetails && memoryDetails && (
+                <div className="absolute bottom-full left-0 mb-2 p-3 bg-white rounded-lg shadow-lg border border-gray-200 w-64 z-10">
+                  <h4 className="font-semibold text-gray-800 mb-2">Conversation Memory</h4>
+                  <div className="space-y-1 text-xs">
+                    <p className="flex justify-between">
+                      <span className="text-gray-600">Messages:</span>
+                      <span className="font-medium">{memoryDetails.length}</span>
+                    </p>
+                    <p className="flex justify-between">
+                      <span className="text-gray-600">Memory Size:</span>
+                      <span className="font-medium">{memoryDetails.size} KB</span>
+                    </p>
+                    <p className="flex justify-between">
+                      <span className="text-gray-600">Context Window:</span>
+                      <span className="font-medium">Last 6 messages</span>
+                    </p>
+                    <div className="pt-2 text-gray-500 text-[10px] italic">
+                      Click "Start New" to clear conversation memory
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           <button
             onClick={handleClearConversation}
