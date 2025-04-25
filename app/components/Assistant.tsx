@@ -178,10 +178,11 @@ export default function Assistant({ userId }: { userId: string }) {
     setIsRagSyncing(true);
     
     try {
-      const response = await fetch('http://127.0.0.1:8000/load_user_data', {
+      // uncomment this to run locally
+      // const response = await fetch('http://127.0.0.1:8000/load_user_data', {
       
       //uncomment this to push to the github repo
-      // const response = await fetch('https://api.know360.io/llm_twin/load_user_data', {
+      const response = await fetch('https://api.know360.io/llm_twin/load_user_data', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -259,10 +260,11 @@ export default function Assistant({ userId }: { userId: string }) {
     setIsLoading(true);
     
     try {
-      const response = await fetch('http://127.0.0.1:8000/query', {
+      // uncomment this to run locally
+      // const response = await fetch('http://127.0.0.1:8000/query', {
       
       //uncomment this to push to the github repo
-      // const response = await fetch('https://api.know360.io/llm_twin/query', {
+      const response = await fetch('https://api.know360.io/llm_twin/query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -329,10 +331,11 @@ export default function Assistant({ userId }: { userId: string }) {
         content: msg.content
       }));
       
-      const response = await fetch('http://127.0.0.1:8000/query', {
+      // uncomment this to run locally
+      // const response = await fetch('http://127.0.0.1:8000/query', {
       
       //uncomment this to push to the github repo
-      // const response = await fetch('https://api.know360.io/llm_twin/query', {
+      const response = await fetch('https://api.know360.io/llm_twin/query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
